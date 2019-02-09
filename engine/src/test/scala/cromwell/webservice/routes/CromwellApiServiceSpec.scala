@@ -2,8 +2,8 @@ package cromwell.webservice.routes
 
 import akka.actor.{Actor, ActorLogging, ActorSystem, Props}
 import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport._
-import akka.http.scaladsl.model._
 import akka.http.scaladsl.model.ContentTypes._
+import akka.http.scaladsl.model._
 import akka.http.scaladsl.testkit.{RouteTestTimeout, ScalatestRouteTest}
 import akka.stream.ActorMaterializer
 import common.util.VersionUtil
@@ -19,10 +19,10 @@ import cromwell.services.metadata.MetadataService._
 import cromwell.services.metadata._
 import cromwell.services.womtool.WomtoolServiceMessages.{DescribeFailure, DescribeRequest, DescribeSuccess, WorkflowDescription}
 import cromwell.util.SampleWdl.HelloWorld
-import cromwell.webservice.EngineStatsActor
+import cromwell.webservice.WorkflowJsonSupport._
+import cromwell.webservice.{EngineStatsActor, FailureResponse}
 import mouse.boolean._
 import org.scalatest.{AsyncFlatSpec, Matchers}
-import spray.json.DefaultJsonProtocol._
 import spray.json._
 
 import scala.concurrent.duration._
@@ -35,16 +35,15 @@ class CromwellApiServiceSpec extends AsyncFlatSpec with ScalatestRouteTest with 
 
   implicit def default = RouteTestTimeout(5.seconds)
 
-  "REST ENGINE /stats endpoint" should "return 200 for stats" ignore {
+  "REST ENGINE /stats endpoint" should "no longer return 200 for stats" in {
     Get(s"/engine/$version/stats") ~>
       akkaHttpService.engineRoutes ~>
       check {
-        status should be(StatusCodes.OK)
-        val resp = responseAs[JsObject]
-        val workflows = resp.fields("workflows").asInstanceOf[JsNumber].value.toInt
-        val jobs = resp.fields("jobs").asInstanceOf[JsNumber].value.toInt
-        workflows should be(1)
-        jobs should be(23)
+        status should be(StatusCodes.Forbidden)
+        contentType should be(ContentTypes.`application/json`)
+        responseAs[FailureResponse] should be(
+          FailureResponse("fail", "The /stats endpoint is currently disabled.", None)
+        )
       }
   }
 
@@ -53,6 +52,7 @@ class CromwellApiServiceSpec extends AsyncFlatSpec with ScalatestRouteTest with 
       akkaHttpService.engineRoutes ~>
       check {
         status should be(StatusCodes.OK)
+        contentType should be(ContentTypes.`application/json`)
         val resp = responseAs[JsObject]
         val cromwellVersion = resp.fields("cromwell").asInstanceOf[JsString].value
         cromwellVersion should fullyMatch regex
@@ -65,6 +65,7 @@ class CromwellApiServiceSpec extends AsyncFlatSpec with ScalatestRouteTest with 
       akkaHttpService.engineRoutes ~>
         check {
           status should be(StatusCodes.OK)
+          contentType should be(ContentTypes.`application/json`)
           val resp = responseAs[JsObject]
           val db = resp.fields("Engine Database").asJsObject
           db.fields("ok").asInstanceOf[JsBoolean].value should be(true)
@@ -82,6 +83,16 @@ class CromwellApiServiceSpec extends AsyncFlatSpec with ScalatestRouteTest with 
           assertResult(StatusCodes.NotFound) {
             status
           }
+          assertResult {
+            s"""|{
+                |  "status": "error",
+                |  "message": "Couldn't abort $workflowId because no workflow with that ID is in progress"
+                |}
+                |""".stripMargin.trim
+          } {
+            responseAs[String]
+          }
+          assertResult(ContentTypes.`application/json`)(contentType)
         }
     }
 
@@ -100,6 +111,7 @@ class CromwellApiServiceSpec extends AsyncFlatSpec with ScalatestRouteTest with 
           ) {
             responseAs[String]
           }
+          assertResult(ContentTypes.`application/json`)(contentType)
         }
     }
 
@@ -114,6 +126,7 @@ class CromwellApiServiceSpec extends AsyncFlatSpec with ScalatestRouteTest with 
         assertResult(StatusCodes.OK) {
           status
         }
+        assertResult(ContentTypes.`application/json`)(contentType)
       }
     }
 
@@ -128,6 +141,7 @@ class CromwellApiServiceSpec extends AsyncFlatSpec with ScalatestRouteTest with 
         assertResult(StatusCodes.OK) {
           status
         }
+        assertResult(ContentTypes.`application/json`)(contentType)
       }
   }
 
@@ -142,6 +156,7 @@ class CromwellApiServiceSpec extends AsyncFlatSpec with ScalatestRouteTest with 
           assertResult(StatusCodes.OK) {
             status
           }
+          assertResult(ContentTypes.`application/json`)(contentType)
         }
     }
 
@@ -284,6 +299,7 @@ class CromwellApiServiceSpec extends AsyncFlatSpec with ScalatestRouteTest with 
               |}
               |""".stripMargin.trim
         )
+        contentType should be(ContentTypes.`application/json`)
         headers.size should be(1)
         val warningHeader = header("Warning")
         warningHeader shouldNot be(empty)
@@ -314,6 +330,7 @@ class CromwellApiServiceSpec extends AsyncFlatSpec with ScalatestRouteTest with 
           assertResult(StatusCodes.BadRequest) {
             status
           }
+          assertResult(ContentTypes.`application/json`)(contentType)
         }
     }
 
@@ -336,6 +353,16 @@ class CromwellApiServiceSpec extends AsyncFlatSpec with ScalatestRouteTest with 
           assertResult(StatusCodes.BadRequest) {
             status
           }
+          assertResult {
+            """|{
+               |  "status": "fail",
+               |  "message": "Error(s): Invalid workflow options provided: Unsupported key/value pair in WorkflowOptions: defaultRuntimeOptions -> {\"cpu\":1}"
+               |}
+               |""".stripMargin.trim
+          } {
+            responseAs[String]
+          }
+          assertResult(ContentTypes.`application/json`)(contentType)
         }
     }
 
@@ -354,6 +381,16 @@ class CromwellApiServiceSpec extends AsyncFlatSpec with ScalatestRouteTest with 
           assertResult(StatusCodes.BadRequest) {
             status
           }
+          assertResult {
+            """|{
+               |  "status": "fail",
+               |  "message": "Error(s): Invalid workflow options provided: Unexpected end-of-input at input index 28 (line 3, position 1), expected '}':\n\n^\n"
+               |}
+               |""".stripMargin.trim
+          } {
+            responseAs[String]
+          }
+          assertResult(ContentTypes.`application/json`)(contentType)
         }
     }
 
@@ -373,6 +410,7 @@ class CromwellApiServiceSpec extends AsyncFlatSpec with ScalatestRouteTest with 
           assertResult(StatusCodes.BadRequest) {
             status
           }
+          assertResult(ContentTypes.`application/json`)(contentType)
         }
     }
 
@@ -399,6 +437,7 @@ class CromwellApiServiceSpec extends AsyncFlatSpec with ScalatestRouteTest with 
           assertResult(StatusCodes.Created) {
             status
           }
+          assertResult(ContentTypes.`application/json`)(contentType)
         }
     }
 
@@ -418,6 +457,7 @@ class CromwellApiServiceSpec extends AsyncFlatSpec with ScalatestRouteTest with 
           assertResult(StatusCodes.BadRequest) {
             status
           }
+          assertResult(ContentTypes.`application/json`)(contentType)
         }
     }
 
@@ -462,6 +502,7 @@ class CromwellApiServiceSpec extends AsyncFlatSpec with ScalatestRouteTest with 
                |}""".stripMargin) {
             responseAs[String].parseJson.prettyPrint
           }
+          assertResult(ContentTypes.`application/json`)(contentType)
         }
     }
 }

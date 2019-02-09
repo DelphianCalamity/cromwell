@@ -1,5 +1,13 @@
 # Cromwell Change Log
 
+## 38 Release Notes
+
+### Bug fixes
+
+#### HTTP responses
+
+- When returning errors as json the `Content-Type` header is set to `application/json`.
+
 ## 37 Release Notes
 
 ### Docker

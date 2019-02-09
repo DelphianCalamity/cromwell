@@ -2,13 +2,13 @@ package cromiam.instrumentation
 
 import akka.http.scaladsl.model.{HttpRequest, HttpResponse}
 import cats.data.NonEmptyList
+import cats.effect.IO
+import cromwell.api.model.FailureResponseOrT
 import cromwell.core.instrumentation.InstrumentationPrefixes._
 import cromwell.services.instrumentation.CromwellInstrumentation
 import cromwell.services.instrumentation.CromwellInstrumentation.InstrumentationPath
 
-import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration._
-import scala.util.{Failure, Success}
 
 object CromIamInstrumentation {
   private val UUIDRegex = {
@@ -49,17 +49,37 @@ trait CromIamInstrumentation extends CromwellInstrumentation {
 
   def instrumentationPrefixForSam(methodPrefix: NonEmptyList[String]): NonEmptyList[String] = samPrefix.concatNel(methodPrefix)
 
-  def instrumentRequest[A](func: () => Future[A], httpRequest: HttpRequest, prefix: NonEmptyList[String])(implicit ec: ExecutionContext): Future[A] = {
+  def instrumentRequest[A](func: () => FailureResponseOrT[A],
+                           httpRequest: HttpRequest,
+                           prefix: NonEmptyList[String]): FailureResponseOrT[A] = {
     val startTimestamp = System.currentTimeMillis
 
-    val funcResponseFuture = func()
+    val funcResponseIO = func()
 
-    funcResponseFuture.onComplete {
-      case Success(response: HttpResponse) => sendTimingApi(makePathFromRequestAndResponse(httpRequest, response), (System.currentTimeMillis - startTimestamp).millis, prefix)
-      case Success(_) => sendTimingApi(makePathFromRequestAndResponseString(httpRequest, "success"), (System.currentTimeMillis - startTimestamp).millis, prefix)
-      case Failure(_) => sendTimingApi(makePathFromRequestAndResponseString(httpRequest, "failure"), (System.currentTimeMillis - startTimestamp).millis, prefix)
-    }
-
-    funcResponseFuture
+    FailureResponseOrT(
+      funcResponseIO.value.attempt flatMap { attempt =>
+        attempt match {
+          case Right(Right(response: HttpResponse)) =>
+            sendTimingApi(
+              makePathFromRequestAndResponse(httpRequest, response),
+              (System.currentTimeMillis - startTimestamp).millis,
+              prefix
+            )
+          case Right(Right(_)) =>
+            sendTimingApi(
+              makePathFromRequestAndResponseString(httpRequest, "success"),
+              (System.currentTimeMillis - startTimestamp).millis,
+              prefix
+            )
+          case Left(_) | Right(Left(_)) =>
+            sendTimingApi(
+              makePathFromRequestAndResponseString(httpRequest, "failure"),
+              (System.currentTimeMillis - startTimestamp).millis,
+              prefix
+            )
+        }
+        IO.fromEither(attempt)
+      }
+    )
   }
 }
